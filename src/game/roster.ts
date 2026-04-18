@@ -10,18 +10,28 @@ export function rosterFromAssignments(
   lobby: Player[],
   assignments: RoleAssignment[],
   deadPlayerIds: Iterable<string>,
+  pendingNightKillIds?: Iterable<string>,
 ): PlayerWithRole[] | null {
   const dead = asDeadSet(deadPlayerIds)
+  const pendingKill =
+    pendingNightKillIds === undefined
+      ? new Set<string>()
+      : pendingNightKillIds instanceof Set
+        ? pendingNightKillIds
+        : new Set(pendingNightKillIds)
   const byId = new Map(lobby.map((p) => [p.id, p]))
   const out: PlayerWithRole[] = []
   for (const a of assignments) {
     const p = byId.get(a.playerId)
     if (!p) return null
+    const isDead = dead.has(p.id)
+    const willDieAtDawn = !isDead && pendingKill.has(p.id)
     out.push({
       name: p.name,
       id: p.id,
       roleId: a.roleId,
-      dead: dead.has(p.id),
+      dead: isDead,
+      ...(willDieAtDawn ? { pendingKillAtDawn: true as const } : {}),
     })
   }
   return out
@@ -48,3 +58,13 @@ export function clampToLivingPlayerIndex(roster: PlayerWithRole[], index: number
   })()
   return prev
 }
+
+/** Living player ids in table order for a new night or after day. */
+export function buildNightPendingQueue(
+  assignments: { playerId: string }[],
+  deadPlayerIds: Iterable<string>,
+): string[] {
+  const dead = deadPlayerIds instanceof Set ? deadPlayerIds : new Set(deadPlayerIds)
+  return assignments.map((a) => a.playerId).filter((id) => !dead.has(id))
+}
+

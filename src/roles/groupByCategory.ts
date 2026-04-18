@@ -2,8 +2,9 @@ import { ROLES } from './definitions'
 import type { RoleCategory, RoleDefinition } from './types'
 
 const LABELS: Record<RoleCategory, string> = {
-  vanilla: 'Vanilla',
-  neutral: 'Neutral',
+  killer: 'Killer',
+  survivor: 'Survivor',
+  other: 'Other',
 }
 
 /** Heading for a category; add entries here when you extend `RoleCategory`. */

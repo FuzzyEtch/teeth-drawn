@@ -1,17 +1,34 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { loadPlayers } from '../players/storage'
 import type { PlayerWithRole } from '../players/types'
 import { ROLES } from '../roles/definitions'
-import type { RoleCategory } from '../roles/types'
-import { NightActionForRole } from './nightActions/registry'
-import { clampToLivingPlayerIndex, nextLivingPlayerIndex, rosterFromAssignments } from './roster'
+import { categoryLabel } from '../roles/groupByCategory'
 import {
-  commitNightDraftToDay,
+  DayAnnouncementsPanel,
+  DayDiscussionPanel,
+  DayVoteCastingPanel,
+  DayVoteTallyPanel,
+  DISCUSSION_DEFAULT_MS,
+} from './day/DayPhasePanels'
+import { createEliminationNightEvent } from './nightEvents'
+import type { NightEvent } from './nightEvents'
+import { NightActionForRole } from './nightActions/registry'
+import { buildNightPendingQueue, rosterFromAssignments } from './roster'
+import {
   loadGameState,
+  saveDayProgress,
   saveNightDraft,
+  type DayStep,
   type NightDraft,
   type RoleAssignment,
 } from './storage'
+import {
+  canPlayerVote,
+  canReceiveDayVotes,
+  dayVoteTargets,
+  eligibleVoters,
+  type VoteRecord,
+} from './voting'
 import './GameView.css'
 
 const IDENTITY_DELAY_MS = 2000
@@ -20,58 +37,80 @@ function getRoleDefinition(roleId: string) {
   return ROLES.find((r) => r.id === roleId)
 }
 
-function categoryLabel(category: RoleCategory): string {
-  if (category === 'vanilla') return 'Standard'
-  if (category === 'neutral') return 'Neutral'
-  return category
-}
-
 function hydrateGameView(): {
   cycle: 'night' | 'day'
   round: number
-  playerIndex: number
+  pendingPlayerIds: string[]
   nightStep: NightDraft['nightStep']
   identityStep: NightDraft['identityStep']
   roleAssignments: RoleAssignment[]
   deadPlayerIds: string[]
+  pendingNightKillIds: string[]
+  nightEventsLog: NightEvent[]
+  dayStep: DayStep
+  discussionEndAt: number | null
+  voteRecords: VoteRecord[]
+  voteCastingIndex: number
 } {
   const s = loadGameState()
+  const emptyEvents: NightEvent[] = []
+  const emptyVotes: VoteRecord[] = []
   if (s.phase === 'night_draft') {
     const { draft } = s
     return {
       cycle: 'night',
       round: draft.round,
-      playerIndex: draft.playerIndex,
+      pendingPlayerIds: draft.pendingPlayerIds,
       nightStep: draft.nightStep,
       identityStep: draft.identityStep,
       roleAssignments: s.roleAssignments,
       deadPlayerIds: s.deadPlayerIds,
+      pendingNightKillIds: s.draft.pendingNightKillIds ?? [],
+      nightEventsLog: s.nightEventsLog ?? emptyEvents,
+      dayStep: 'announcements',
+      discussionEndAt: null,
+      voteRecords: emptyVotes,
+      voteCastingIndex: 0,
     }
   }
   if (s.phase === 'day') {
     return {
       cycle: 'day',
       round: s.round,
-      playerIndex: 0,
+      pendingPlayerIds: [],
       nightStep: 'identity',
       identityStep: 'delay',
       roleAssignments: s.roleAssignments,
       deadPlayerIds: s.deadPlayerIds,
+      pendingNightKillIds: [],
+      nightEventsLog: s.nightEventsLog ?? emptyEvents,
+      dayStep: s.dayStep ?? 'announcements',
+      discussionEndAt: s.discussionEndAt ?? null,
+      voteRecords: s.voteRecords ?? emptyVotes,
+      voteCastingIndex: s.voteCastingIndex ?? 0,
     }
   }
   return {
     cycle: 'night',
     round: 1,
-    playerIndex: 0,
+    pendingPlayerIds: [],
     nightStep: 'identity',
     identityStep: 'delay',
     roleAssignments: [],
     deadPlayerIds: [],
+    pendingNightKillIds: [],
+    nightEventsLog: [],
+    dayStep: 'announcements',
+    discussionEndAt: null,
+    voteRecords: emptyVotes,
+    voteCastingIndex: 0,
   }
 }
 
 function serialKillerKillCandidates(roster: PlayerWithRole[], current: PlayerWithRole): PlayerWithRole[] {
-  return roster.filter((p) => !p.dead && p.id !== current.id)
+  return roster.filter(
+    (p) => !p.dead && !p.pendingKillAtDawn && p.id !== current.id,
+  )
 }
 
 function canFinishNightAction(
@@ -95,49 +134,89 @@ export function GameView() {
   const [roleAssignments] = useState<RoleAssignment[]>(() => initial.roleAssignments)
 
   const [deadPlayerIds, setDeadPlayerIds] = useState<string[]>(() => initial.deadPlayerIds)
+  const [pendingNightKillIds, setPendingNightKillIds] = useState<string[]>(
+    () => initial.pendingNightKillIds,
+  )
+  const [nightEventsLog, setNightEventsLog] = useState<NightEvent[]>(() => initial.nightEventsLog)
 
   const [cycle, setCycle] = useState<'night' | 'day'>(initial.cycle)
   const [round, setRound] = useState(initial.round)
-  const [playerIndex, setPlayerIndex] = useState(initial.playerIndex)
+  const [pendingPlayerIds, setPendingPlayerIds] = useState<string[]>(() => initial.pendingPlayerIds)
   const [nightStep, setNightStep] = useState<'identity' | 'actions'>(initial.nightStep)
   const [identityStep, setIdentityStep] = useState<'delay' | 'first' | 'yes'>(initial.identityStep)
 
+  const [dayStep, setDayStep] = useState<DayStep>(() => initial.dayStep)
+  const [discussionEndAt, setDiscussionEndAt] = useState<number | null>(() => initial.discussionEndAt)
+
+  const [voteRecords, setVoteRecords] = useState<VoteRecord[]>(() => initial.voteRecords)
+  const [voteCastingIndex, setVoteCastingIndex] = useState(() => initial.voteCastingIndex)
+  const [voteTargetId, setVoteTargetId] = useState<string | null>(null)
+
   const [killTargetId, setKillTargetId] = useState<string | null>(null)
+  const [discussionTimerTick, setDiscussionTimerTick] = useState(0)
 
   const roster = useMemo(
-    () => rosterFromAssignments(lobby, roleAssignments, deadPlayerIds),
-    [lobby, roleAssignments, deadPlayerIds],
+    () =>
+      rosterFromAssignments(
+        lobby,
+        roleAssignments,
+        deadPlayerIds,
+        cycle === 'night' ? pendingNightKillIds : [],
+      ),
+    [lobby, roleAssignments, deadPlayerIds, cycle, pendingNightKillIds],
   )
 
-  const clampedOnce = useRef(false)
-  useLayoutEffect(() => {
-    if (!roster?.length || clampedOnce.current) return
-    clampedOnce.current = true
-    setPlayerIndex((i) => clampToLivingPlayerIndex(roster, i))
-  }, [roster])
-
-  const currentPlayer: PlayerWithRole | undefined = roster?.[playerIndex]
+  const nightTurnPlayerId = pendingPlayerIds[0]
+  const currentPlayer: PlayerWithRole | undefined =
+    cycle === 'night' && nightTurnPlayerId
+      ? roster?.find((p) => p.id === nightTurnPlayerId)
+      : undefined
 
   useEffect(() => {
     setKillTargetId(null)
-  }, [playerIndex])
+  }, [nightTurnPlayerId])
 
   useEffect(() => {
     if (cycle === 'night') {
       saveNightDraft(
         {
           round,
-          playerIndex,
+          pendingPlayerIds,
+          pendingNightKillIds,
           nightStep,
           identityStep,
         },
         roleAssignments,
         deadPlayerIds,
+        nightEventsLog,
       )
     } else {
-      commitNightDraftToDay(round, roleAssignments, deadPlayerIds)
+      saveDayProgress(
+        round,
+        roleAssignments,
+        deadPlayerIds,
+        nightEventsLog,
+        dayStep,
+        discussionEndAt,
+        voteRecords,
+        voteCastingIndex,
+      )
     }
-  }, [cycle, round, playerIndex, nightStep, identityStep, roleAssignments, deadPlayerIds])
+  }, [
+    cycle,
+    round,
+    pendingPlayerIds,
+    pendingNightKillIds,
+    nightStep,
+    identityStep,
+    roleAssignments,
+    deadPlayerIds,
+    nightEventsLog,
+    dayStep,
+    discussionEndAt,
+    voteRecords,
+    voteCastingIndex,
+  ])
 
   useEffect(() => {
     if (cycle !== 'night' || nightStep !== 'identity' || identityStep !== 'delay') {
@@ -147,7 +226,32 @@ export function GameView() {
       setIdentityStep('first')
     }, IDENTITY_DELAY_MS)
     return () => window.clearTimeout(t)
-  }, [cycle, nightStep, identityStep, playerIndex, round])
+  }, [cycle, nightStep, identityStep, nightTurnPlayerId, round])
+
+  useEffect(() => {
+    if (cycle !== 'day' || dayStep !== 'discussion' || discussionEndAt === null) {
+      return
+    }
+    const id = window.setInterval(() => {
+      setDiscussionTimerTick((x) => x + 1)
+    }, 250)
+    return () => window.clearInterval(id)
+  }, [cycle, dayStep, discussionEndAt])
+
+  useEffect(() => {
+    if (cycle !== 'day' || dayStep !== 'discussion' || discussionEndAt === null) return
+    if (Date.now() >= discussionEndAt) {
+      setDayStep('voting')
+      setDiscussionEndAt(null)
+      setVoteRecords([])
+      setVoteCastingIndex(0)
+      setVoteTargetId(null)
+    }
+  }, [cycle, dayStep, discussionEndAt, discussionTimerTick])
+
+  useEffect(() => {
+    setVoteTargetId(null)
+  }, [voteCastingIndex])
 
   const onFirstIdentityConfirm = useCallback(() => {
     setIdentityStep('yes')
@@ -161,39 +265,82 @@ export function GameView() {
     if (!roster || !currentPlayer) return
     if (!canFinishNightAction(currentPlayer.roleId, roster, currentPlayer, killTargetId)) return
 
-    let nextDead = deadPlayerIds
+    let nextPendingKills = pendingNightKillIds
     if (currentPlayer.roleId === 'serial_killer' && killTargetId) {
-      nextDead = [...new Set([...deadPlayerIds, killTargetId])]
-      setDeadPlayerIds(nextDead)
+      const victim = roster.find((p) => p.id === killTargetId)
+      nextPendingKills = [...new Set([...pendingNightKillIds, killTargetId])]
+      setNightEventsLog((prev) => [
+        ...prev,
+        createEliminationNightEvent(killTargetId, victim?.name ?? 'Someone', { publicNextDay: true }),
+      ])
     }
 
-    const rosterAfter = rosterFromAssignments(lobby, roleAssignments, nextDead)
-    if (!rosterAfter) return
+    const nextQueue = pendingPlayerIds.slice(1)
 
     setKillTargetId(null)
     setNightStep('identity')
     setIdentityStep('delay')
+    setPendingPlayerIds(nextQueue)
 
-    const nextIdx = nextLivingPlayerIndex(rosterAfter, playerIndex + 1)
-    if (nextIdx === null) {
+    if (nextQueue.length === 0) {
+      setDeadPlayerIds((prev) => [...new Set([...prev, ...nextPendingKills])])
+      setPendingNightKillIds([])
       setCycle('day')
-      return
+      setDayStep('announcements')
+      setDiscussionEndAt(null)
+    } else {
+      setPendingNightKillIds(nextPendingKills)
     }
-    setPlayerIndex(nextIdx)
-  }, [roster, currentPlayer, killTargetId, deadPlayerIds, lobby, roleAssignments, playerIndex])
+  }, [roster, currentPlayer, killTargetId, pendingNightKillIds, pendingPlayerIds])
 
-  const onDayContinue = useCallback(() => {
+  const onAnnouncementsContinue = useCallback(() => {
+    setDayStep('discussion')
+    setDiscussionEndAt(Date.now() + DISCUSSION_DEFAULT_MS)
+    setDiscussionTimerTick(0)
+  }, [])
+
+  const onAddDiscussionMinute = useCallback(() => {
+    setDiscussionEndAt((prev) => {
+      const base = prev ?? Date.now()
+      return base + 60_000
+    })
+  }, [])
+
+  const onEndDiscussion = useCallback(() => {
+    setDayStep('voting')
+    setDiscussionEndAt(null)
+    setVoteRecords([])
+    setVoteCastingIndex(0)
+    setVoteTargetId(null)
+  }, [])
+
+  const onContinueToNextNight = useCallback(() => {
+    setNightEventsLog([])
+    setVoteRecords([])
+    setVoteCastingIndex(0)
+    setVoteTargetId(null)
     setCycle('night')
     setRound((r) => r + 1)
     setNightStep('identity')
     setIdentityStep('delay')
     setKillTargetId(null)
-    const nextRoster = rosterFromAssignments(lobby, roleAssignments, deadPlayerIds)
-    if (nextRoster?.length) {
-      const first = nextLivingPlayerIndex(nextRoster, 0)
-      if (first !== null) setPlayerIndex(first)
-    }
-  }, [lobby, roleAssignments, deadPlayerIds])
+    setDayStep('announcements')
+    setDiscussionEndAt(null)
+    setPendingNightKillIds([])
+    setPendingPlayerIds(buildNightPendingQueue(roleAssignments, deadPlayerIds))
+  }, [roleAssignments, deadPlayerIds])
+
+  const onSubmitDayVote = useCallback(() => {
+    if (!roster || voteTargetId === null) return
+    const voters = eligibleVoters(roster)
+    const currentVoter = voters[voteCastingIndex]
+    if (!currentVoter) return
+    const target = roster.find((p) => p.id === voteTargetId)
+    if (!target || !canPlayerVote(currentVoter) || !canReceiveDayVotes(target)) return
+    setVoteRecords((prev) => [...prev, { voterId: currentVoter.id, targetId: target.id }])
+    setVoteCastingIndex((i) => i + 1)
+    setVoteTargetId(null)
+  }, [roster, voteTargetId, voteCastingIndex])
 
   if (lobby.length === 0) {
     return (
@@ -220,16 +367,20 @@ export function GameView() {
     currentPlayer &&
     canFinishNightAction(currentPlayer.roleId, roster, currentPlayer, killTargetId)
 
+  const dayEligibleVoters = useMemo(() => eligibleVoters(roster), [roster])
+  const dayVoteTargetList = useMemo(() => dayVoteTargets(roster), [roster])
+  const currentDayVoter = dayEligibleVoters[voteCastingIndex]
+  const showVoteCasting =
+    dayStep === 'voting' && voteCastingIndex < dayEligibleVoters.length && currentDayVoter
+  const showVoteTally = dayStep === 'voting' && voteCastingIndex >= dayEligibleVoters.length
+
   return (
     <div className="home game-view">
       <h1>Teeth Drawn</h1>
 
       {cycle === 'night' && (
         <section className="game-view-segment" aria-label="Night phase">
-          <p className="game-view-phase-label">
-            Night {round} — player {playerIndex + 1} of {roster.length}
-            {deadPlayerIds.length > 0 ? ` · ${deadPlayerIds.length} eliminated` : ''}
-          </p>
+          <p className="game-view-phase-label">Night {round}</p>
 
           {nightStep === 'identity' && currentPlayer && (
             <div className="game-view-panel">
@@ -325,23 +476,41 @@ export function GameView() {
 
       {cycle === 'day' && (
         <section className="game-view-segment" aria-label="Day phase">
-          <p className="game-view-phase-label">Day {round}</p>
-          <div className="game-view-panel">
-            <h2 className="game-view-subheading">Day phase</h2>
-            <p className="game-view-placeholder">
-              The day phase will be implemented later. When you are ready, continue to the next
-              night.
-            </p>
-            {deadPlayerIds.length > 0 && (
-              <p className="game-view-placeholder">
-                Eliminated this game: {deadPlayerIds.length} player
-                {deadPlayerIds.length === 1 ? '' : 's'} (names hidden here to avoid spoilers).
-              </p>
-            )}
-            <button type="button" className="game-view-btn" onClick={onDayContinue}>
-              Continue to night
-            </button>
-          </div>
+          {dayStep === 'announcements' && (
+            <DayAnnouncementsPanel
+              round={round}
+              nightEventsLog={nightEventsLog}
+              onContinue={onAnnouncementsContinue}
+            />
+          )}
+          {dayStep === 'discussion' && discussionEndAt !== null && (
+            <DayDiscussionPanel
+              discussionEndAt={discussionEndAt}
+              onAddMinute={onAddDiscussionMinute}
+              onEndDiscussion={onEndDiscussion}
+              timerTick={discussionTimerTick}
+            />
+          )}
+          {showVoteCasting && currentDayVoter && (
+            <DayVoteCastingPanel
+              round={round}
+              currentVoter={currentDayVoter}
+              voteTargets={dayVoteTargetList}
+              castingIndex={voteCastingIndex}
+              eligibleTotal={dayEligibleVoters.length}
+              selectedTargetId={voteTargetId}
+              onSelectTarget={setVoteTargetId}
+              onSubmitVote={onSubmitDayVote}
+            />
+          )}
+          {showVoteTally && (
+            <DayVoteTallyPanel
+              round={round}
+              roster={roster}
+              votes={voteRecords}
+              onContinueToNight={onContinueToNextNight}
+            />
+          )}
         </section>
       )}
     </div>

@@ -4,6 +4,11 @@ export type Player = { name: string; id: string }
 /** Lobby players plus assigned role id (set when a game is in progress). */
 export type PlayerWithRole = Player & {
   roleId: string
-  /** Set from game state; dead players are skipped during night order. */
+  /** Confirmed eliminations (day hang or end of night). */
   dead: boolean
+  /**
+   * Serial killer chose this player this night; they are not `dead` until dawn.
+   * They still take their night turn if it comes before morning.
+   */
+  pendingKillAtDawn?: boolean
 }

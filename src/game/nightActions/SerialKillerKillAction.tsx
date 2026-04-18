@@ -6,7 +6,9 @@ export function SerialKillerKillAction({
   killTargetId,
   onKillTargetChange,
 }: NightActionPanelProps) {
-  const candidates = roster.filter((p) => !p.dead && p.id !== currentPlayer.id)
+  const candidates = roster.filter(
+    (p) => !p.dead && !p.pendingKillAtDawn && p.id !== currentPlayer.id,
+  )
 
   if (candidates.length === 0) {
     return (

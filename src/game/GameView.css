@@ -240,3 +240,78 @@
 .game-view-btn:disabled:hover {
   border-color: var(--accent-border);
 }
+
+.game-view-btn--secondary {
+  background: transparent;
+  color: var(--text-h);
+  border-color: var(--border);
+}
+
+.game-view-btn--secondary:hover {
+  border-color: var(--accent);
+  background: var(--social-bg);
+}
+
+.game-view-panel--day {
+  max-width: 34rem;
+}
+
+.game-view-day-empty {
+  margin: 0 0 16px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+  font-style: italic;
+}
+
+.game-view-day-events {
+  margin: 0 0 20px;
+  padding: 0 0 0 1.25rem;
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.game-view-day-event {
+  margin: 0 0 8px;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--text-h);
+}
+
+.game-view-panel--discussion {
+  align-items: center;
+}
+
+.game-view-discussion-timer {
+  margin: 8px 0 20px;
+  font-size: 48px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--text-h);
+  font-family: var(--mono);
+}
+
+.game-view-discussion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+}
+
+.game-view-panel--voting {
+  max-width: 34rem;
+}
+
+.game-view-vote-hint {
+  max-width: 28rem;
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.game-view-tally-counts,
+.game-view-tally-ballots {
+  margin-bottom: 12px;
+}
