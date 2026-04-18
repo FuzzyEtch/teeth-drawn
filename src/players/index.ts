@@ -1,2 +1,2 @@
-export type { Player } from './types'
+export type { Player, PlayerWithRole } from './types'
 export { PlayersSection } from './PlayersSection'

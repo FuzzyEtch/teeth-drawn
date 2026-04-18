@@ -1,7 +1,7 @@
 import { ROLES } from './definitions'
 import type { RoleCounts } from './types'
 
-const STORAGE_KEY = 'werewolf-tabletop-role-counts'
+const STORAGE_KEY = 'teeth-drawn-role-counts'
 
 function isRoleCounts(raw: unknown): raw is RoleCounts {
   if (typeof raw !== 'object' || raw === null) return false

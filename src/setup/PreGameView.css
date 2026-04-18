@@ -1,3 +1,55 @@
+.home-recovery {
+  width: 100%;
+  max-width: 36rem;
+  margin-bottom: 24px;
+  padding: 20px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  box-sizing: border-box;
+}
+
+.home-recovery-text {
+  margin: 0 0 16px;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text);
+  text-align: center;
+}
+
+.home-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+}
+
+.home-recovery-discard {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  transition:
+    border-color 0.2s,
+    color 0.2s;
+}
+
+.home-recovery-discard:hover {
+  border-color: var(--accent);
+  color: var(--text-h);
+}
+
+.home-recovery-discard:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .home-actions {
   margin-bottom: 28px;
 }

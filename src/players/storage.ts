@@ -1,6 +1,6 @@
 import type { Player } from './types'
 
-const STORAGE_KEY = 'werewolf-tabletop-players'
+const STORAGE_KEY = 'teeth-drawn-players'
 
 function parsePlayer(raw: unknown): Player | null {
   if (typeof raw !== 'object' || raw === null || !('name' in raw)) return null

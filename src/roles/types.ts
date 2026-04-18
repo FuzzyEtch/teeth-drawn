@@ -1,5 +1,5 @@
 /** Extend this union when adding new role categories. */
-export type RoleCategory = 'vanilla' | 'neutral'
+export type RoleCategory = 'killer' | 'survivor' | 'other'
 
 export type RoleDefinition = {
   id: string
