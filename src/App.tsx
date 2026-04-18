@@ -1,54 +1,20 @@
 import { useCallback, useState } from 'react'
-import { PlayersSection } from './players'
-import { loadPlayers } from './players/storage'
-import { loadRoleCounts, RolesSection, sumRoleCounts } from './roles'
-import { TransientToast } from './TransientToast'
+import { GameView } from './game/GameView'
+import { PreGameView } from './setup/PreGameView'
 import './App.css'
 
 function App() {
-  const [startError, setStartError] = useState<string | null>(null)
+  const [gameStarted, setGameStarted] = useState(false)
 
-  const dismissStartError = useCallback(() => {
-    setStartError(null)
+  const handleGameStart = useCallback(() => {
+    setGameStarted(true)
   }, [])
 
-  const handleStartGame = useCallback(() => {
-    const players = loadPlayers()
-    const counts = loadRoleCounts()
-    const roleTotal = sumRoleCounts(counts)
-    const n = players.length
+  if (gameStarted) {
+    return <GameView />
+  }
 
-    if (roleTotal !== n) {
-      const p = n === 1 ? '' : 's'
-      const r = roleTotal === 1 ? '' : 's'
-      setStartError(
-        `You have ${n} player${p} but ${roleTotal} role${r} selected. Totals must match before starting.`,
-      )
-      return
-    }
-
-    setStartError(null)
-    // TODO: navigate / begin game session
-  }, [])
-
-  return (
-    <div className="home">
-      <h1>Werewolf Tabletop</h1>
-
-      <div className="home-actions">
-        <button type="button" className="start-game-btn" onClick={handleStartGame}>
-          Start game
-        </button>
-      </div>
-
-      <PlayersSection />
-      <RolesSection />
-
-      {startError && (
-        <TransientToast message={startError} onDismiss={dismissStartError} />
-      )}
-    </div>
-  )
+  return <PreGameView onGameStart={handleGameStart} />
 }
 
 export default App

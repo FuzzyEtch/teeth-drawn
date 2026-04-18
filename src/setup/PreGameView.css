@@ -1,0 +1,27 @@
+.home-actions {
+  margin-bottom: 28px;
+}
+
+.start-game-btn {
+  font: inherit;
+  font-size: 16px;
+  font-weight: 500;
+  padding: 10px 22px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-h);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+
+  &:hover {
+    border-color: var(--accent);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
